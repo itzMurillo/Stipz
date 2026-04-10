@@ -1,7 +1,6 @@
 package br.com.stipz.service;
 
-import br.com.stipz.DTO.RecursoDTO;
-import br.com.stipz.DTO.ReservaRequestDTO;
+import br.com.stipz.DTO.*;
 import br.com.stipz.domain.*;
 import br.com.stipz.enums.StatusReserva;
 import br.com.stipz.repository.*;
@@ -34,11 +33,14 @@ public class ReservaService {
         this.reservaRecursoRepository = reservaRecursoRepository;
     }
 
-    public List<Reserva> listar() {
-        return reservaRepository.findAll();
+    public List<ReservaResponseDTO> listar() {
+        return reservaRepository.findAll()
+                .stream()
+                .map(this::toDTO)
+                .toList();
     }
 
-    public Reserva criarReservaCompleta(ReservaRequestDTO dto) {
+    public ReservaResponseDTO criarReservaCompleta(ReservaRequestDTO dto) {
 
         Usuario usuario = usuarioRepository.findById(dto.usuarioId)
                 .orElseThrow(() -> new RuntimeException("Usuário não encontrado"));
@@ -86,6 +88,10 @@ public class ReservaService {
 
         reserva = reservaRepository.save(reserva);
 
+        if (reserva.getRecursos() == null) {
+            reserva.setRecursos(new java.util.ArrayList<>());
+        }
+
         if (dto.recursos != null && !dto.recursos.isEmpty()) {
 
             for (RecursoDTO r : dto.recursos) {
@@ -100,6 +106,14 @@ public class ReservaService {
 
                 Recurso recurso = recursoRepository.findById(r.recursoId)
                         .orElseThrow(() -> new RuntimeException("Recurso não encontrado"));
+
+                if (recurso.getTipoRecurso().getExigeAprovacao()
+                        && !recurso.getTipoRecurso().getPermitido()) {
+
+                    throw new RuntimeException(
+                            "Recurso exige aprovação: " + recurso.getNome()
+                    );
+                }
 
                 if (recurso.getFixo() && !recurso.getSala().getId().equals(sala.getId())) {
                     throw new RuntimeException("Recurso fixo não pertence a essa sala");
@@ -125,15 +139,16 @@ public class ReservaService {
                 rr.setRecurso(recurso);
                 rr.setQuantidade(r.quantidade);
 
-                reservaRecursoRepository.save(rr);
+                rr = reservaRecursoRepository.save(rr);
+
+                reserva.getRecursos().add(rr);
             }
         }
 
-        return reserva;
+        return toDTO(reserva);
     }
 
     public Reserva aprovar(Long id) {
-
         Reserva reserva = reservaRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Reserva não encontrada"));
 
@@ -148,7 +163,6 @@ public class ReservaService {
     }
 
     public Reserva rejeitar(Long id) {
-
         Reserva reserva = reservaRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Reserva não encontrada"));
 
@@ -163,7 +177,6 @@ public class ReservaService {
     }
 
     public Reserva cancelar(Long id) {
-
         Reserva reserva = reservaRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Reserva não encontrada"));
 
@@ -181,5 +194,35 @@ public class ReservaService {
         reserva.setDataAtualizacao(LocalDateTime.now());
 
         return reservaRepository.save(reserva);
+    }
+
+    private ReservaResponseDTO toDTO(Reserva reserva) {
+
+        ReservaResponseDTO dto = new ReservaResponseDTO();
+
+        dto.id = reserva.getId();
+        dto.dataInicio = reserva.getDataInicio();
+        dto.dataFim = reserva.getDataFim();
+        dto.status = reserva.getStatus().name();
+
+        UsuarioResumoDTO usuarioDTO = new UsuarioResumoDTO();
+        usuarioDTO.id = reserva.getUsuario().getId();
+        usuarioDTO.nome = reserva.getUsuario().getNome();
+        dto.usuario = usuarioDTO;
+
+        SalaResumoDTO salaDTO = new SalaResumoDTO();
+        salaDTO.id = reserva.getSala().getId();
+        salaDTO.nome = reserva.getSala().getNome();
+        dto.sala = salaDTO;
+
+        dto.recursos = reserva.getRecursos() == null ? List.of() :
+                reserva.getRecursos().stream().map(rr -> {
+                    RecursoResumoDTO r = new RecursoResumoDTO();
+                    r.nome = rr.getRecurso().getNome();
+                    r.quantidade = rr.getQuantidade();
+                    return r;
+                }).toList();
+
+        return dto;
     }
 }
