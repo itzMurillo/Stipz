@@ -3,6 +3,8 @@ package br.com.stipz.service;
 import br.com.stipz.DTO.*;
 import br.com.stipz.domain.*;
 import br.com.stipz.enums.StatusReserva;
+import br.com.stipz.exception.RegraNegocioException;
+import br.com.stipz.exception.RecursoNaoEncontradoException;
 import br.com.stipz.repository.*;
 import org.springframework.stereotype.Service;
 
@@ -43,13 +45,13 @@ public class ReservaService {
     public ReservaResponseDTO criarReservaCompleta(ReservaRequestDTO dto) {
 
         Usuario usuario = usuarioRepository.findById(dto.usuarioId)
-                .orElseThrow(() -> new RuntimeException("Usuário não encontrado"));
+                .orElseThrow(() -> new RecursoNaoEncontradoException("Usuário não encontrado"));
 
         Sala sala = salaRepository.findById(dto.salaId)
-                .orElseThrow(() -> new RuntimeException("Sala não encontrada"));
+                .orElseThrow(() -> new RecursoNaoEncontradoException("Sala não encontrada"));
 
         if (dto.fim.isBefore(dto.inicio)) {
-            throw new RuntimeException("Data fim não pode ser antes do início");
+            throw new RegraNegocioException("Data fim não pode ser antes do início");
         }
 
         boolean conflito = reservaRepository
@@ -58,7 +60,7 @@ public class ReservaService {
                 );
 
         if (conflito) {
-            throw new RuntimeException("Conflito de horário");
+            throw new RegraNegocioException("Conflito de horário");
         }
 
         LocalDateTime inicioSemana = dto.inicio
@@ -74,7 +76,7 @@ public class ReservaService {
         );
 
         if (total >= 5) {
-            throw new RuntimeException("Limite de 5 reservas por semana atingido");
+            throw new RegraNegocioException("Limite de 5 reservas por semana atingido");
         }
 
         Reserva reserva = new Reserva();
@@ -97,26 +99,28 @@ public class ReservaService {
             for (RecursoDTO r : dto.recursos) {
 
                 if (r.recursoId == null) {
-                    throw new RuntimeException("ID do recurso não informado");
+                    throw new RegraNegocioException("ID do recurso não informado");
                 }
 
                 if (r.quantidade == null || r.quantidade <= 0) {
-                    throw new RuntimeException("Quantidade inválida");
+                    throw new RegraNegocioException("Quantidade inválida");
                 }
 
                 Recurso recurso = recursoRepository.findById(r.recursoId)
-                        .orElseThrow(() -> new RuntimeException("Recurso não encontrado"));
+                        .orElseThrow(() -> new RecursoNaoEncontradoException("Recurso não encontrado"));
 
-                if (recurso.getTipoRecurso().getExigeAprovacao()
-                        && !recurso.getTipoRecurso().getPermitido()) {
+                TipoRecurso tipo = recurso.getTipoRecurso();
 
-                    throw new RuntimeException(
-                            "Recurso exige aprovação: " + recurso.getNome()
-                    );
+                if (!tipo.getPermitido() && !tipo.getExigeAprovacao()) {
+                    throw new RegraNegocioException("Recurso não permitido: " + recurso.getNome());
+                }
+
+                if (tipo.getExigeAprovacao()) {
+                    reserva.setStatus(StatusReserva.PENDENTE);
                 }
 
                 if (recurso.getFixo() && !recurso.getSala().getId().equals(sala.getId())) {
-                    throw new RuntimeException("Recurso fixo não pertence a essa sala");
+                    throw new RegraNegocioException("Recurso fixo não pertence a essa sala");
                 }
 
                 List<ReservaRecurso> reservas = reservaRecursoRepository.findByRecurso(recurso);
@@ -131,7 +135,7 @@ public class ReservaService {
                         .sum();
 
                 if (totalReservado + r.quantidade > recurso.getQuantidade()) {
-                    throw new RuntimeException("Recurso indisponível: " + recurso.getNome());
+                    throw new RegraNegocioException("Recurso indisponível: " + recurso.getNome());
                 }
 
                 ReservaRecurso rr = new ReservaRecurso();
@@ -150,10 +154,10 @@ public class ReservaService {
 
     public Reserva aprovar(Long id) {
         Reserva reserva = reservaRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Reserva não encontrada"));
+                .orElseThrow(() -> new RecursoNaoEncontradoException("Reserva não encontrada"));
 
         if (reserva.getStatus() != StatusReserva.PENDENTE) {
-            throw new RuntimeException("Reserva já foi processada");
+            throw new RegraNegocioException("Reserva já foi processada");
         }
 
         reserva.setStatus(StatusReserva.APROVADA);
@@ -164,10 +168,10 @@ public class ReservaService {
 
     public Reserva rejeitar(Long id) {
         Reserva reserva = reservaRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Reserva não encontrada"));
+                .orElseThrow(() -> new RecursoNaoEncontradoException("Reserva não encontrada"));
 
         if (reserva.getStatus() != StatusReserva.PENDENTE) {
-            throw new RuntimeException("Reserva já foi processada");
+            throw new RegraNegocioException("Reserva já foi processada");
         }
 
         reserva.setStatus(StatusReserva.REJEITADA);
@@ -178,16 +182,16 @@ public class ReservaService {
 
     public Reserva cancelar(Long id) {
         Reserva reserva = reservaRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Reserva não encontrada"));
+                .orElseThrow(() -> new RecursoNaoEncontradoException("Reserva não encontrada"));
 
         if (reserva.getStatus() == StatusReserva.CANCELADA) {
-            throw new RuntimeException("Reserva já está cancelada");
+            throw new RegraNegocioException("Reserva já está cancelada");
         }
 
         LocalDateTime agora = LocalDateTime.now();
 
         if (reserva.getDataInicio().minusHours(3).isBefore(agora)) {
-            throw new RuntimeException("Não é possível cancelar com menos de 3 horas");
+            throw new RegraNegocioException("Não é possível cancelar com menos de 3 horas");
         }
 
         reserva.setStatus(StatusReserva.CANCELADA);
@@ -197,7 +201,6 @@ public class ReservaService {
     }
 
     private ReservaResponseDTO toDTO(Reserva reserva) {
-
         ReservaResponseDTO dto = new ReservaResponseDTO();
 
         dto.id = reserva.getId();
@@ -205,23 +208,21 @@ public class ReservaService {
         dto.dataFim = reserva.getDataFim();
         dto.status = reserva.getStatus().name();
 
-        UsuarioResumoDTO usuarioDTO = new UsuarioResumoDTO();
-        usuarioDTO.id = reserva.getUsuario().getId();
-        usuarioDTO.nome = reserva.getUsuario().getNome();
-        dto.usuario = usuarioDTO;
+        dto.usuario = new UsuarioResumoDTO();
+        dto.usuario.id = reserva.getUsuario().getId();
+        dto.usuario.nome = reserva.getUsuario().getNome();
 
-        SalaResumoDTO salaDTO = new SalaResumoDTO();
-        salaDTO.id = reserva.getSala().getId();
-        salaDTO.nome = reserva.getSala().getNome();
-        dto.sala = salaDTO;
+        dto.sala = new SalaResumoDTO();
+        dto.sala.id = reserva.getSala().getId();
+        dto.sala.nome = reserva.getSala().getNome();
 
-        dto.recursos = reserva.getRecursos() == null ? List.of() :
+        dto.recursos = (reserva.getRecursos() == null ? List.of() :
                 reserva.getRecursos().stream().map(rr -> {
                     RecursoResumoDTO r = new RecursoResumoDTO();
                     r.nome = rr.getRecurso().getNome();
                     r.quantidade = rr.getQuantidade();
                     return r;
-                }).toList();
+                }).toList());
 
         return dto;
     }

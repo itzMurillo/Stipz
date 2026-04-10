@@ -21,8 +21,8 @@ public class UsuarioService {
 
     public Usuario criar(UsuarioRequestDTO dto) {
 
-        if (usuarioRepository.existsByEmailIgnoreCase((dto.email))) {
-            throw new RegraNegocioException("Já existe um usuário com esse email");
+        if (usuarioRepository.existsByNomeIgnoreCaseAndEmailIgnoreCase(dto.nome, dto.email)) {
+            throw new RegraNegocioException("Já existe um usuário cadastrado com esse nome e email");
         }
 
         Usuario usuario = new Usuario();
